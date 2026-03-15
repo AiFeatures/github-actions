@@ -1,0 +1,130 @@
+name: Cloud Cost Check
+description: "Run Infracost cloud cost estimation on Terraform changes"
+
+inputs:
+  api-key:
+    description: "Infracost API key"
+    required: true
+  working-directory:
+    description: "Working directory containing Terraform files"
+    required: false
+    default: "."
+  currency:
+    description: "Currency for cost output"
+    required: false
+    default: "USD"
+  show-skipped:
+    description: "Show skipped resources in output"
+    required: false
+    default: "false"
+  post-comment:
+    description: "Post cost diff as PR comment"
+    required: false
+    default: "true"
+  github-token:
+    description: "GitHub token for posting PR comments"
+    required: false
+    default: ""
+  threshold-percentage:
+    description: "Warn if cost increase exceeds this percentage"
+    required: false
+    default: "10"
+
+outputs:
+  monthly-cost:
+    description: "Estimated total monthly cost"
+    value: ${{ steps.cost.outputs.monthly-cost }}
+  diff-monthly-cost:
+    description: "Monthly cost difference from baseline"
+    value: ${{ steps.cost.outputs.diff-monthly-cost }}
+  cost-increased:
+    description: "Whether costs increased beyond threshold"
+    value: ${{ steps.cost.outputs.cost-increased }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Infracost
+      uses: infracost/actions/setup@22ae542a0a48911a06dfa3b1e9e1ddfe96ddf5f8 # v3.0.1
+      with:
+        api-key: ${{ inputs.api-key }}
+        currency: ${{ inputs.currency }}
+
+    - name: Generate Infracost baseline
+      if: github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        git checkout "${{ github.event.pull_request.base.ref }}" --quiet 2>/dev/null || true
+        infracost breakdown \
+          --path "${{ inputs.working-directory }}" \
+          --format json \
+          --out-file /tmp/infracost-base.json 2>/dev/null || true
+        git checkout "${{ github.sha }}" --quiet 2>/dev/null || true
+
+    - name: Generate Infracost cost breakdown
+      id: cost
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        SHOW_SKIPPED=""
+        if [ "${{ inputs.show-skipped }}" = "true" ]; then
+          SHOW_SKIPPED="--show-skipped"
+        fi
+
+        infracost breakdown \
+          --path "${{ inputs.working-directory }}" \
+          --format json \
+          --out-file /tmp/infracost-current.json \
+          $SHOW_SKIPPED
+
+        MONTHLY=$(jq -r '.totalMonthlyCost // "0"' /tmp/infracost-current.json)
+        echo "monthly-cost=$MONTHLY" >> "$GITHUB_OUTPUT"
+
+        if [ -f /tmp/infracost-base.json ]; then
+          infracost diff \
+            --path "${{ inputs.working-directory }}" \
+            --compare-to /tmp/infracost-base.json \
+            --format json \
+            --out-file /tmp/infracost-diff.json
+
+          DIFF=$(jq -r '.diffTotalMonthlyCost // "0"' /tmp/infracost-diff.json)
+          echo "diff-monthly-cost=$DIFF" >> "$GITHUB_OUTPUT"
+
+          BASE_COST=$(jq -r '.totalMonthlyCost // "0"' /tmp/infracost-base.json)
+          if [ "$BASE_COST" != "0" ] && [ "$BASE_COST" != "null" ]; then
+            PCT=$(echo "scale=2; ($DIFF / $BASE_COST) * 100" | bc 2>/dev/null || echo "0")
+            THRESHOLD="${{ inputs.threshold-percentage }}"
+            if (( $(echo "$PCT > $THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
+              echo "cost-increased=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "cost-increased=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "cost-increased=false" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          echo "diff-monthly-cost=0" >> "$GITHUB_OUTPUT"
+          echo "cost-increased=false" >> "$GITHUB_OUTPUT"
+        fi
+
+        echo "### Cloud Cost Estimate" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Monthly cost:** \$$MONTHLY" >> "$GITHUB_STEP_SUMMARY"
+        infracost breakdown \
+          --path "${{ inputs.working-directory }}" \
+          --format table >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+    - name: Post PR comment
+      if: inputs.post-comment == 'true' && github.event_name == 'pull_request' && inputs.github-token != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        if [ -f /tmp/infracost-diff.json ]; then
+          infracost comment github \
+            --path /tmp/infracost-diff.json \
+            --repo "${{ github.repository }}" \
+            --pull-request "${{ github.event.pull_request.number }}" \
+            --github-token "$GITHUB_TOKEN" \
+            --behavior update
+        fi

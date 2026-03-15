@@ -1,0 +1,143 @@
+name: Auto Release
+description: "Create semantic releases with changelog generation"
+
+inputs:
+  github-token:
+    description: "GitHub token with contents:write permission"
+    required: true
+  npm-token:
+    description: "NPM token (for publishing to npm)"
+    required: false
+    default: ""
+  release-type:
+    description: "Force release type (patch, minor, major) — empty = auto-detect from commits"
+    required: false
+    default: ""
+  dry-run:
+    description: "Run in dry-run mode (no actual release)"
+    required: false
+    default: "false"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  extra-plugins:
+    description: "Additional semantic-release plugins (comma-separated npm package names)"
+    required: false
+    default: ""
+  branches:
+    description: "Release branches (comma-separated)"
+    required: false
+    default: "main"
+  tag-format:
+    description: "Tag format (use ${version} as placeholder)"
+    required: false
+    default: "v${version}"
+
+outputs:
+  released:
+    description: "Whether a new release was created"
+    value: ${{ steps.release.outputs.released }}
+  version:
+    description: "Released version"
+    value: ${{ steps.release.outputs.version }}
+  tag:
+    description: "Git tag for the release"
+    value: ${{ steps.release.outputs.tag }}
+  changelog:
+    description: "Release changelog"
+    value: ${{ steps.release.outputs.changelog }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: "22"
+
+    - name: Install semantic-release
+      shell: bash
+      run: |
+        npm install -g \
+          semantic-release \
+          @semantic-release/changelog \
+          @semantic-release/git \
+          conventional-changelog-conventionalcommits
+
+        if [ -n "${{ inputs.extra-plugins }}" ]; then
+          IFS=',' read -ra PLUGINS <<< "${{ inputs.extra-plugins }}"
+          for plugin in "${PLUGINS[@]}"; do
+            npm install -g "$(echo "$plugin" | xargs)"
+          done
+        fi
+
+    - name: Create release config
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ ! -f .releaserc.json ] && [ ! -f .releaserc ] && [ ! -f .releaserc.yml ] && [ ! -f release.config.js ] && [ ! -f release.config.cjs ]; then
+          IFS=',' read -ra BRANCH_LIST <<< "${{ inputs.branches }}"
+          BRANCHES_JSON=$(printf '%s\n' "${BRANCH_LIST[@]}" | jq -R . | jq -s .)
+
+          cat > .releaserc.json << EOF
+        {
+          "branches": $BRANCHES_JSON,
+          "tagFormat": "${{ inputs.tag-format }}",
+          "plugins": [
+            ["@semantic-release/commit-analyzer", {
+              "preset": "conventionalcommits",
+              "releaseRules": [
+                {"type": "feat", "release": "minor"},
+                {"type": "fix", "release": "patch"},
+                {"type": "perf", "release": "patch"},
+                {"type": "revert", "release": "patch"},
+                {"breaking": true, "release": "major"}
+              ]
+            }],
+            ["@semantic-release/release-notes-generator", {
+              "preset": "conventionalcommits"
+            }],
+            "@semantic-release/changelog",
+            "@semantic-release/github",
+            ["@semantic-release/git", {
+              "assets": ["CHANGELOG.md", "package.json"],
+              "message": "chore(release): \${nextRelease.version} [skip ci]"
+            }]
+          ]
+        }
+        EOF
+        fi
+
+    - name: Run semantic-release
+      id: release
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        NPM_TOKEN: ${{ inputs.npm-token }}
+      run: |
+        set -euo pipefail
+
+        ARGS=""
+        if [ "${{ inputs.dry-run }}" = "true" ]; then
+          ARGS="--dry-run"
+        fi
+
+        OUTPUT=$(npx semantic-release $ARGS 2>&1) || true
+        echo "$OUTPUT"
+
+        if echo "$OUTPUT" | grep -q "Published release"; then
+          VERSION=$(echo "$OUTPUT" | grep -oP 'Published release \K[0-9]+\.[0-9]+\.[0-9]+' || true)
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ inputs.tag-format }}" | sed "s/\${version}/$VERSION/" >> "$GITHUB_OUTPUT"
+          echo "### Release Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** $VERSION" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "released=false" >> "$GITHUB_OUTPUT"
+          echo "version=" >> "$GITHUB_OUTPUT"
+          echo "tag=" >> "$GITHUB_OUTPUT"
+          echo "### No Release" >> "$GITHUB_STEP_SUMMARY"
+          echo "No releasable changes detected." >> "$GITHUB_STEP_SUMMARY"
+        fi

@@ -1,0 +1,71 @@
+name: Deploy to Railway
+description: "Deploy an application to Railway"
+
+inputs:
+  railway-token:
+    description: "Railway API token"
+    required: true
+  service:
+    description: "Railway service name (for multi-service projects)"
+    required: false
+    default: ""
+  environment:
+    description: "Railway environment (production, staging)"
+    required: false
+    default: "production"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  wait:
+    description: "Wait for deployment to complete"
+    required: false
+    default: "true"
+
+outputs:
+  url:
+    description: "Deployed service URL"
+    value: ${{ steps.deploy.outputs.url }}
+  deployment-id:
+    description: "Railway deployment ID"
+    value: ${{ steps.deploy.outputs.deployment-id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Railway CLI
+      shell: bash
+      run: npm install -g @railway/cli@latest
+
+    - name: Deploy to Railway
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        RAILWAY_TOKEN: ${{ inputs.railway-token }}
+      run: |
+        set -euo pipefail
+
+        ARGS="--environment ${{ inputs.environment }}"
+
+        if [ -n "${{ inputs.service }}" ]; then
+          ARGS="$ARGS --service ${{ inputs.service }}"
+        fi
+
+        if [ "${{ inputs.wait }}" = "false" ]; then
+          ARGS="$ARGS --detach"
+        fi
+
+        OUTPUT=$(railway up $ARGS 2>&1)
+        echo "$OUTPUT"
+
+        URL=$(echo "$OUTPUT" | grep -oE 'https://[^ ]+' | tail -1 || true)
+        DEPLOY_ID=$(echo "$OUTPUT" | grep -oE '[a-f0-9-]{36}' | head -1 || true)
+
+        echo "url=$URL" >> "$GITHUB_OUTPUT"
+        echo "deployment-id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+        echo "### Railway Deployment" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Environment:** ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+        if [ -n "$URL" ]; then
+          echo "- **URL:** $URL" >> "$GITHUB_STEP_SUMMARY"
+        fi

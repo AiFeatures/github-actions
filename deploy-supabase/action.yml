@@ -1,0 +1,90 @@
+name: Deploy Supabase Migrations
+description: "Run Supabase database migrations"
+
+inputs:
+  supabase-access-token:
+    description: "Supabase access token"
+    required: true
+  project-id:
+    description: "Supabase project ID"
+    required: true
+  db-password:
+    description: "Database password"
+    required: true
+  working-directory:
+    description: "Working directory (must contain supabase/ directory)"
+    required: false
+    default: "."
+  run-seed:
+    description: "Run seed file after migration"
+    required: false
+    default: "false"
+  generate-types:
+    description: "Generate TypeScript types after migration"
+    required: false
+    default: "false"
+
+outputs:
+  migration-status:
+    description: "Migration status (success or failure)"
+    value: ${{ steps.migrate.outputs.status }}
+  types-path:
+    description: "Path to generated types file"
+    value: ${{ steps.types.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Supabase CLI
+      shell: bash
+      run: |
+        brew install supabase/tap/supabase 2>/dev/null || \
+          npm install -g supabase@latest
+
+    - name: Link Supabase project
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase-access-token }}
+      run: |
+        supabase link --project-ref "${{ inputs.project-id }}" \
+          --password "${{ inputs.db-password }}"
+
+    - name: Run migrations
+      id: migrate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase-access-token }}
+      run: |
+        set -euo pipefail
+        supabase db push --password "${{ inputs.db-password }}"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+        echo "### Supabase Migration" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Project:** ${{ inputs.project-id }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Status:** success" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Run seed
+      if: inputs.run-seed == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase-access-token }}
+      run: |
+        if [ -f supabase/seed.sql ]; then
+          supabase db execute --file supabase/seed.sql
+        fi
+
+    - name: Generate TypeScript types
+      id: types
+      if: inputs.generate-types == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase-access-token }}
+      run: |
+        TYPES_PATH="src/types/supabase.ts"
+        mkdir -p "$(dirname "$TYPES_PATH")"
+        supabase gen types typescript \
+          --project-id "${{ inputs.project-id }}" > "$TYPES_PATH"
+        echo "path=$TYPES_PATH" >> "$GITHUB_OUTPUT"

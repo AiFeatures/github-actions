@@ -1,0 +1,93 @@
+name: Deploy to Fly.io
+description: "Deploy an application to Fly.io"
+
+inputs:
+  fly-api-token:
+    description: "Fly.io API token"
+    required: true
+  app-name:
+    description: "Fly.io app name (defaults to fly.toml config)"
+    required: false
+    default: ""
+  config:
+    description: "Path to fly.toml"
+    required: false
+    default: "fly.toml"
+  region:
+    description: "Fly.io region"
+    required: false
+    default: ""
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  build-args:
+    description: "Docker build arguments (space-separated --build-arg KEY=VALUE)"
+    required: false
+    default: ""
+  strategy:
+    description: "Deployment strategy (canary, rolling, bluegreen, immediate)"
+    required: false
+    default: ""
+  wait-timeout:
+    description: "Seconds to wait for deployment to complete"
+    required: false
+    default: "300"
+
+outputs:
+  url:
+    description: "Deployed application URL"
+    value: ${{ steps.deploy.outputs.url }}
+  app-name:
+    description: "Fly.io app name"
+    value: ${{ steps.deploy.outputs.app }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install flyctl
+      shell: bash
+      run: |
+        curl -L https://fly.io/install.sh | sh
+        echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+    - name: Deploy to Fly.io
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FLY_API_TOKEN: ${{ inputs.fly-api-token }}
+      run: |
+        set -euo pipefail
+
+        ARGS="--config ${{ inputs.config }} --now"
+        ARGS="$ARGS --wait-timeout ${{ inputs.wait-timeout }}"
+
+        if [ -n "${{ inputs.app-name }}" ]; then
+          ARGS="$ARGS --app ${{ inputs.app-name }}"
+        fi
+
+        if [ -n "${{ inputs.region }}" ]; then
+          ARGS="$ARGS --region ${{ inputs.region }}"
+        fi
+
+        if [ -n "${{ inputs.strategy }}" ]; then
+          ARGS="$ARGS --strategy ${{ inputs.strategy }}"
+        fi
+
+        if [ -n "${{ inputs.build-args }}" ]; then
+          ARGS="$ARGS ${{ inputs.build-args }}"
+        fi
+
+        flyctl deploy $ARGS
+
+        APP_NAME="${{ inputs.app-name }}"
+        if [ -z "$APP_NAME" ]; then
+          APP_NAME=$(grep '^app' "${{ inputs.config }}" | head -1 | sed "s/app *= *['\"]\\{0,1\\}\\([^'\"]*\\)['\"]\\{0,1\\}/\\1/")
+        fi
+
+        echo "app=$APP_NAME" >> "$GITHUB_OUTPUT"
+        echo "url=https://${APP_NAME}.fly.dev" >> "$GITHUB_OUTPUT"
+        echo "### Fly.io Deployment" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **App:** $APP_NAME" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **URL:** https://${APP_NAME}.fly.dev" >> "$GITHUB_STEP_SUMMARY"

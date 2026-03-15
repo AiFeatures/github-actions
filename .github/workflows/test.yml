@@ -1,0 +1,215 @@
+name: CI — Test Actions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "*/action.yml"
+      - ".github/workflows/test.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-actions:
+    name: Validate action metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate all action.yml files
+        shell: bash
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          for action_file in */action.yml; do
+            DIR=$(dirname "$action_file")
+            echo "::group::Validating $action_file"
+
+            # Check required fields
+            for field in name description; do
+              if ! grep -q "^${field}:" "$action_file"; then
+                echo "::error file=$action_file::Missing required field: $field"
+                ERRORS=$((ERRORS + 1))
+              fi
+            done
+
+            # Check composite format
+            if ! grep -q "using: composite" "$action_file"; then
+              echo "::error file=$action_file::Not a composite action (missing 'using: composite')"
+              ERRORS=$((ERRORS + 1))
+            fi
+
+            # Check all steps have shell defined (for run steps)
+            if grep -A1 "run:" "$action_file" | grep -v "shell:" | grep -v "run:" | grep -v "^--$" | grep -q .; then
+              echo "::notice file=$action_file::Some run steps may be missing explicit shell"
+            fi
+
+            echo "::endgroup::"
+          done
+
+          echo ""
+          echo "=== Validation Summary ==="
+          echo "Actions found: $(ls -d */action.yml 2>/dev/null | wc -l | tr -d ' ')"
+          echo "Errors: $ERRORS"
+
+          if [ "$ERRORS" -gt 0 ]; then
+            exit 1
+          fi
+
+  yaml-lint:
+    name: YAML lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint YAML files
+        run: |
+          yamllint -d '{extends: default, rules: {line-length: {max: 200}, truthy: disable, document-start: disable}}' \
+            */action.yml .github/workflows/*.yml
+
+  test-setup-node:
+    name: Test setup-node
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+        package-manager: ["npm", "pnpm"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create test project
+        run: |
+          mkdir -p /tmp/test-node
+          cd /tmp/test-node
+          if [ "${{ matrix.package-manager }}" = "pnpm" ]; then
+            npm init -y
+            npx pnpm init
+          else
+            npm init -y
+          fi
+
+      - name: Run setup-node action
+        uses: ./setup-node
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager: ${{ matrix.package-manager }}
+          install: "false"
+
+      - name: Verify Node.js
+        run: |
+          node --version
+          echo "Node.js setup successful"
+
+  test-setup-python:
+    name: Test setup-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        package-manager: ["pip", "poetry"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create test project
+        run: |
+          mkdir -p /tmp/test-python
+          echo "requests==2.31.0" > /tmp/test-python/requirements.txt
+
+      - name: Run setup-python action
+        uses: ./setup-python
+        with:
+          python-version: ${{ matrix.python-version }}
+          package-manager: ${{ matrix.package-manager }}
+          install: "false"
+
+      - name: Verify Python
+        run: |
+          python --version
+          echo "Python setup successful"
+
+  test-setup-terraform:
+    name: Test setup-terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create test Terraform files
+        run: |
+          mkdir -p /tmp/test-tf
+          cat > /tmp/test-tf/main.tf << 'EOF'
+          terraform {
+            required_version = ">= 1.0"
+          }
+
+          output "test" {
+            value = "hello"
+          }
+          EOF
+
+      - name: Run setup-terraform action
+        uses: ./setup-terraform
+        with:
+          working-directory: /tmp/test-tf
+          init: "true"
+          validate: "true"
+
+      - name: Verify Terraform
+        run: |
+          terraform version
+          echo "Terraform setup successful"
+
+  test-label-pr:
+    name: Test label-pr (dry run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify action metadata
+        run: |
+          if grep -q "using: composite" label-pr/action.yml; then
+            echo "label-pr action is valid composite action"
+          else
+            echo "::error::label-pr is not a composite action"
+            exit 1
+          fi
+
+  all-tests-pass:
+    name: All tests pass
+    if: always()
+    needs:
+      - lint-actions
+      - yaml-lint
+      - test-setup-node
+      - test-setup-python
+      - test-setup-terraform
+      - test-label-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ]; then
+            echo "::error::Some tests failed"
+            exit 1
+          fi
+          echo "All tests passed!"

@@ -1,0 +1,70 @@
+name: Setup Node.js
+description: "Setup Node.js with pnpm/npm caching and dependency installation"
+
+inputs:
+  node-version:
+    description: "Node.js version to install"
+    required: false
+    default: "22"
+  package-manager:
+    description: "Package manager to use (npm, pnpm, yarn)"
+    required: false
+    default: "pnpm"
+  pnpm-version:
+    description: "pnpm version (only used when package-manager is pnpm)"
+    required: false
+    default: "9"
+  install:
+    description: "Run dependency installation after setup"
+    required: false
+    default: "true"
+  working-directory:
+    description: "Working directory for install command"
+    required: false
+    default: "."
+  install-args:
+    description: "Additional arguments for the install command"
+    required: false
+    default: ""
+
+outputs:
+  node-version:
+    description: "Installed Node.js version"
+    value: ${{ steps.setup-node.outputs.node-version }}
+  cache-hit:
+    description: "Whether the cache was hit"
+    value: ${{ steps.setup-node.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm
+      if: inputs.package-manager == 'pnpm'
+      uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      with:
+        version: ${{ inputs.pnpm-version }}
+
+    - name: Setup Node.js
+      id: setup-node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: ${{ inputs.package-manager }}
+
+    - name: Install dependencies (pnpm)
+      if: inputs.install == 'true' && inputs.package-manager == 'pnpm'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: pnpm install --frozen-lockfile ${{ inputs.install-args }}
+
+    - name: Install dependencies (npm)
+      if: inputs.install == 'true' && inputs.package-manager == 'npm'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci ${{ inputs.install-args }}
+
+    - name: Install dependencies (yarn)
+      if: inputs.install == 'true' && inputs.package-manager == 'yarn'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: yarn install --frozen-lockfile ${{ inputs.install-args }}

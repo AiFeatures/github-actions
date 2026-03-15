@@ -1,0 +1,99 @@
+name: Deploy to Firebase
+description: "Deploy to Firebase Hosting, Functions, or Firestore rules"
+
+inputs:
+  firebase-token:
+    description: "Firebase CI token (or use google-application-credentials)"
+    required: false
+    default: ""
+  google-application-credentials:
+    description: "Google service account JSON key (base64 encoded)"
+    required: false
+    default: ""
+  project-id:
+    description: "Firebase project ID"
+    required: true
+  targets:
+    description: "Firebase deploy targets (comma-separated: hosting, functions, firestore, storage)"
+    required: false
+    default: "hosting"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  channel:
+    description: "Firebase Hosting preview channel name (leave empty for live deploy)"
+    required: false
+    default: ""
+  expires:
+    description: "Preview channel expiry (e.g., 7d, 30d)"
+    required: false
+    default: "7d"
+
+outputs:
+  url:
+    description: "Deployed URL"
+    value: ${{ steps.deploy.outputs.url }}
+  channel-url:
+    description: "Preview channel URL (if using channels)"
+    value: ${{ steps.deploy.outputs.channel-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Google credentials
+      if: inputs.google-application-credentials != ''
+      shell: bash
+      run: |
+        CREDS_FILE="$(mktemp)"
+        echo "${{ inputs.google-application-credentials }}" | base64 -d > "$CREDS_FILE"
+        echo "GOOGLE_APPLICATION_CREDENTIALS=$CREDS_FILE" >> "$GITHUB_ENV"
+
+    - name: Install Firebase CLI
+      shell: bash
+      run: npm install -g firebase-tools@latest
+
+    - name: Deploy to Firebase Hosting (preview channel)
+      id: deploy-preview
+      if: contains(inputs.targets, 'hosting') && inputs.channel != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FIREBASE_TOKEN: ${{ inputs.firebase-token }}
+      run: |
+        set -euo pipefail
+        OUTPUT=$(firebase hosting:channel:deploy "${{ inputs.channel }}" \
+          --project "${{ inputs.project-id }}" \
+          --expires "${{ inputs.expires }}" \
+          --json 2>&1)
+        echo "$OUTPUT"
+        CHANNEL_URL=$(echo "$OUTPUT" | jq -r '.result["'"${{ inputs.channel }}"'"].url // empty' 2>/dev/null || true)
+        echo "channel-url=$CHANNEL_URL" >> "$GITHUB_OUTPUT"
+
+    - name: Deploy to Firebase
+      id: deploy
+      if: inputs.channel == ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FIREBASE_TOKEN: ${{ inputs.firebase-token }}
+      run: |
+        set -euo pipefail
+
+        ONLY_FLAG=""
+        if [ "${{ inputs.targets }}" != "" ]; then
+          ONLY_FLAG="--only ${{ inputs.targets }}"
+        fi
+
+        firebase deploy \
+          --project "${{ inputs.project-id }}" \
+          $ONLY_FLAG \
+          --non-interactive
+
+        if echo "${{ inputs.targets }}" | grep -q "hosting"; then
+          echo "url=https://${{ inputs.project-id }}.web.app" >> "$GITHUB_OUTPUT"
+        fi
+
+        echo "### Firebase Deployment" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Project:** ${{ inputs.project-id }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Targets:** ${{ inputs.targets }}" >> "$GITHUB_STEP_SUMMARY"

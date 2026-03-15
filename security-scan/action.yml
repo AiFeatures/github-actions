@@ -1,0 +1,131 @@
+name: Security Scan
+description: "Run Trivy vulnerability scan, npm audit, and secret scanning"
+
+inputs:
+  scan-type:
+    description: "Scan types to run (comma-separated: trivy,npm-audit,secrets)"
+    required: false
+    default: "trivy,secrets"
+  trivy-scan-type:
+    description: "Trivy scan type (fs, image, config)"
+    required: false
+    default: "fs"
+  trivy-severity:
+    description: "Trivy severity levels to report"
+    required: false
+    default: "CRITICAL,HIGH"
+  trivy-exit-code:
+    description: "Trivy exit code on findings (1 = fail the job)"
+    required: false
+    default: "1"
+  image-ref:
+    description: "Container image to scan (for trivy image scan)"
+    required: false
+    default: ""
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  upload-sarif:
+    description: "Upload SARIF results to GitHub Security tab"
+    required: false
+    default: "true"
+
+outputs:
+  trivy-results:
+    description: "Path to Trivy results file"
+    value: ${{ steps.trivy-output.outputs.results-path }}
+  vulnerabilities-found:
+    description: "Whether vulnerabilities were found"
+    value: ${{ steps.summary.outputs.found }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run Trivy filesystem scan
+      if: contains(inputs.scan-type, 'trivy') && inputs.trivy-scan-type == 'fs'
+      uses: aquasecurity/trivy-action@76071ef0d7ec797419534a183b498b4d6366cf37 # v0.31.0
+      with:
+        scan-type: fs
+        scan-ref: ${{ inputs.working-directory }}
+        severity: ${{ inputs.trivy-severity }}
+        exit-code: ${{ inputs.trivy-exit-code }}
+        format: table
+        output: trivy-fs-results.txt
+
+    - name: Run Trivy image scan
+      if: contains(inputs.scan-type, 'trivy') && inputs.trivy-scan-type == 'image' && inputs.image-ref != ''
+      uses: aquasecurity/trivy-action@76071ef0d7ec797419534a183b498b4d6366cf37 # v0.31.0
+      with:
+        scan-type: image
+        image-ref: ${{ inputs.image-ref }}
+        severity: ${{ inputs.trivy-severity }}
+        exit-code: ${{ inputs.trivy-exit-code }}
+        format: sarif
+        output: trivy-image-results.sarif
+
+    - name: Run Trivy config scan
+      if: contains(inputs.scan-type, 'trivy') && inputs.trivy-scan-type == 'config'
+      uses: aquasecurity/trivy-action@76071ef0d7ec797419534a183b498b4d6366cf37 # v0.31.0
+      with:
+        scan-type: config
+        scan-ref: ${{ inputs.working-directory }}
+        severity: ${{ inputs.trivy-severity }}
+        exit-code: ${{ inputs.trivy-exit-code }}
+        format: table
+        output: trivy-config-results.txt
+
+    - name: Run npm audit
+      if: contains(inputs.scan-type, 'npm-audit')
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f package-lock.json ]; then
+          npm audit --audit-level=high || true
+        elif [ -f pnpm-lock.yaml ]; then
+          npx pnpm audit --audit-level=high || true
+        fi
+
+    - name: Run secret scanning with Trufflehog
+      if: contains(inputs.scan-type, 'secrets')
+      shell: bash
+      run: |
+        docker run --rm -v "$PWD:/repo" \
+          trufflesecurity/trufflehog:latest \
+          filesystem /repo \
+          --only-verified \
+          --fail
+
+    - name: Set trivy output path
+      id: trivy-output
+      if: contains(inputs.scan-type, 'trivy')
+      shell: bash
+      run: |
+        if [ -f trivy-image-results.sarif ]; then
+          echo "results-path=trivy-image-results.sarif" >> "$GITHUB_OUTPUT"
+        elif [ -f trivy-fs-results.txt ]; then
+          echo "results-path=trivy-fs-results.txt" >> "$GITHUB_OUTPUT"
+        elif [ -f trivy-config-results.txt ]; then
+          echo "results-path=trivy-config-results.txt" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload SARIF to GitHub Security
+      if: inputs.upload-sarif == 'true' && contains(inputs.scan-type, 'trivy') && inputs.trivy-scan-type == 'image'
+      uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f # v3.28.18
+      with:
+        sarif_file: trivy-image-results.sarif
+
+    - name: Scan summary
+      id: summary
+      if: always()
+      shell: bash
+      run: |
+        FOUND="false"
+        for f in trivy-fs-results.txt trivy-image-results.sarif trivy-config-results.txt; do
+          if [ -f "$f" ] && [ -s "$f" ]; then
+            FOUND="true"
+          fi
+        done
+        echo "found=$FOUND" >> "$GITHUB_OUTPUT"
+        echo "### Security Scan Complete" >> "$GITHUB_STEP_SUMMARY"
+        echo "Vulnerabilities found: $FOUND" >> "$GITHUB_STEP_SUMMARY"

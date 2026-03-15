@@ -1,0 +1,101 @@
+name: Deploy to Vercel
+description: "Deploy to Vercel with preview and production support"
+
+inputs:
+  vercel-token:
+    description: "Vercel API token"
+    required: true
+  vercel-org-id:
+    description: "Vercel organization ID"
+    required: true
+  vercel-project-id:
+    description: "Vercel project ID"
+    required: true
+  production:
+    description: "Deploy to production (false = preview)"
+    required: false
+    default: "false"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "."
+  build-command:
+    description: "Override the build command"
+    required: false
+    default: ""
+  environment-variables:
+    description: "Environment variables to set (newline-separated KEY=VALUE)"
+    required: false
+    default: ""
+
+outputs:
+  url:
+    description: "Deployment URL"
+    value: ${{ steps.deploy.outputs.url }}
+  preview-url:
+    description: "Preview URL (alias for url)"
+    value: ${{ steps.deploy.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Vercel CLI
+      shell: bash
+      run: npm install -g vercel@latest
+
+    - name: Pull Vercel environment
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+      run: |
+        PROD_FLAG=""
+        if [ "${{ inputs.production }}" = "true" ]; then
+          PROD_FLAG="--prod"
+        fi
+        vercel pull --yes --token="$VERCEL_TOKEN" $PROD_FLAG
+
+    - name: Set environment variables
+      if: inputs.environment-variables != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        ENV_VARS: ${{ inputs.environment-variables }}
+      run: |
+        echo "$ENV_VARS" | while IFS='=' read -r key value; do
+          if [ -n "$key" ] && [ -n "$value" ]; then
+            echo "$value" | vercel env add "$key" preview --token="$VERCEL_TOKEN" 2>/dev/null || true
+          fi
+        done
+
+    - name: Build project
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+      run: |
+        PROD_FLAG=""
+        if [ "${{ inputs.production }}" = "true" ]; then
+          PROD_FLAG="--prod"
+        fi
+        vercel build --token="$VERCEL_TOKEN" $PROD_FLAG
+
+    - name: Deploy to Vercel
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+      run: |
+        PROD_FLAG=""
+        if [ "${{ inputs.production }}" = "true" ]; then
+          PROD_FLAG="--prod"
+        fi
+        URL=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN" $PROD_FLAG)
+        echo "url=$URL" >> "$GITHUB_OUTPUT"
+        echo "### Vercel Deployment" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **URL:** $URL" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Production:** ${{ inputs.production }}" >> "$GITHUB_STEP_SUMMARY"

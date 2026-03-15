@@ -1,0 +1,106 @@
+name: Docker Build & Push
+description: "Build and push Docker images to GHCR with multi-arch support"
+
+inputs:
+  image-name:
+    description: "Image name (without registry prefix)"
+    required: false
+    default: ${{ github.repository }}
+  registry:
+    description: "Container registry"
+    required: false
+    default: "ghcr.io"
+  username:
+    description: "Registry username"
+    required: false
+    default: ${{ github.actor }}
+  password:
+    description: "Registry password / token"
+    required: true
+  context:
+    description: "Docker build context"
+    required: false
+    default: "."
+  file:
+    description: "Path to Dockerfile"
+    required: false
+    default: "./Dockerfile"
+  platforms:
+    description: "Target platforms for multi-arch build"
+    required: false
+    default: "linux/amd64"
+  push:
+    description: "Push the image after building"
+    required: false
+    default: "true"
+  tags:
+    description: "Additional tags (newline-separated, added to auto-generated tags)"
+    required: false
+    default: ""
+  build-args:
+    description: "Docker build arguments (newline-separated KEY=VALUE)"
+    required: false
+    default: ""
+  cache-from:
+    description: "Cache source"
+    required: false
+    default: "type=gha"
+  cache-to:
+    description: "Cache destination"
+    required: false
+    default: "type=gha,mode=max"
+
+outputs:
+  image:
+    description: "Full image reference (registry/name:tag)"
+    value: ${{ steps.meta.outputs.tags }}
+  digest:
+    description: "Image digest"
+    value: ${{ steps.build.outputs.digest }}
+  metadata:
+    description: "Build metadata JSON"
+    value: ${{ steps.build.outputs.metadata }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up QEMU
+      if: inputs.platforms != 'linux/amd64'
+      uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+    - name: Login to container registry
+      uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Extract Docker metadata
+      id: meta
+      uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+      with:
+        images: ${{ inputs.registry }}/${{ inputs.image-name }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+          ${{ inputs.tags }}
+
+    - name: Build and push
+      id: build
+      uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        platforms: ${{ inputs.platforms }}
+        push: ${{ inputs.push }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: ${{ inputs.build-args }}
+        cache-from: ${{ inputs.cache-from }}
+        cache-to: ${{ inputs.cache-to }}

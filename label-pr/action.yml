@@ -1,0 +1,186 @@
+name: Auto-Label PR
+description: "Automatically label pull requests based on changed file paths"
+
+inputs:
+  github-token:
+    description: "GitHub token with pull-requests:write permission"
+    required: true
+  config:
+    description: "Label configuration as YAML (label: glob patterns)"
+    required: false
+    default: |
+      frontend:
+        - "src/app/**"
+        - "src/components/**"
+        - "*.css"
+        - "*.scss"
+        - "*.tsx"
+      backend:
+        - "src/api/**"
+        - "src/server/**"
+        - "src/lib/**"
+      documentation:
+        - "docs/**"
+        - "**/*.md"
+        - "*.md"
+      tests:
+        - "**/*.test.*"
+        - "**/*.spec.*"
+        - "__tests__/**"
+        - "tests/**"
+        - "test/**"
+      ci:
+        - ".github/**"
+        - "Dockerfile"
+        - "docker-compose*"
+      dependencies:
+        - "package.json"
+        - "pnpm-lock.yaml"
+        - "package-lock.json"
+        - "yarn.lock"
+        - "requirements*.txt"
+        - "pyproject.toml"
+        - "go.mod"
+      infrastructure:
+        - "terraform/**"
+        - "*.tf"
+        - "infra/**"
+      database:
+        - "**/migrations/**"
+        - "supabase/**"
+        - "prisma/**"
+        - "drizzle/**"
+  config-file:
+    description: "Path to label config file (overrides config input)"
+    required: false
+    default: ""
+  sync-labels:
+    description: "Remove labels when files no longer match"
+    required: false
+    default: "false"
+
+outputs:
+  labels-added:
+    description: "Comma-separated list of labels added"
+    value: ${{ steps.label.outputs.added }}
+  labels-removed:
+    description: "Comma-separated list of labels removed"
+    value: ${{ steps.label.outputs.removed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine label config
+      id: config
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.config-file }}" ] && [ -f "${{ inputs.config-file }}" ]; then
+          cp "${{ inputs.config-file }}" /tmp/labeler-config.yml
+        else
+          cat > /tmp/labeler-config.yml << 'LABELER_EOF'
+        ${{ inputs.config }}
+        LABELER_EOF
+        fi
+
+    - name: Get changed files
+      id: changed
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        PR_NUMBER="${{ github.event.pull_request.number }}"
+        if [ -z "$PR_NUMBER" ]; then
+          echo "files=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        FILES=$(gh api \
+          "repos/${{ github.repository }}/pulls/${PR_NUMBER}/files" \
+          --paginate \
+          --jq '.[].filename' 2>/dev/null || true)
+
+        # Store in temp file for the labeler step
+        echo "$FILES" > /tmp/changed-files.txt
+        echo "count=$(echo "$FILES" | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+    - name: Apply labels
+      id: label
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+
+        PR_NUMBER="${{ github.event.pull_request.number }}"
+        if [ -z "$PR_NUMBER" ]; then
+          echo "No PR number found, skipping"
+          exit 0
+        fi
+
+        ADDED=""
+        REMOVED=""
+
+        # Simple glob matcher using bash
+        match_glob() {
+          local file="$1"
+          local pattern="$2"
+          # Convert glob to regex
+          local regex=$(echo "$pattern" | sed 's/\./\\./g; s/\*\*/DOUBLESTAR/g; s/\*/[^\/]*/g; s/DOUBLESTAR/.*/g')
+          echo "$file" | grep -qE "^${regex}$" 2>/dev/null
+        }
+
+        # Parse YAML config and match files
+        # Read labels from config
+        CURRENT_LABEL=""
+        declare -A LABEL_MATCHED
+
+        while IFS= read -r line; do
+          # Skip empty lines and comments
+          [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+          if [[ "$line" =~ ^([a-zA-Z0-9_-]+): ]]; then
+            CURRENT_LABEL="${BASH_REMATCH[1]}"
+            LABEL_MATCHED[$CURRENT_LABEL]="false"
+          elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*\"?(.+?)\"?$ ]] && [ -n "$CURRENT_LABEL" ]; then
+            PATTERN="${BASH_REMATCH[1]}"
+            PATTERN=$(echo "$PATTERN" | sed 's/^"//;s/"$//')
+
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              if match_glob "$file" "$PATTERN"; then
+                LABEL_MATCHED[$CURRENT_LABEL]="true"
+                break
+              fi
+            done < /tmp/changed-files.txt
+          fi
+        done < /tmp/labeler-config.yml
+
+        # Get existing labels on the PR
+        EXISTING_LABELS=$(gh api \
+          "repos/${{ github.repository }}/issues/${PR_NUMBER}/labels" \
+          --jq '.[].name' 2>/dev/null || true)
+
+        # Apply labels
+        for label in "${!LABEL_MATCHED[@]}"; do
+          IS_MATCHED="${LABEL_MATCHED[$label]}"
+          HAS_LABEL=$(echo "$EXISTING_LABELS" | grep -qx "$label" && echo "true" || echo "false")
+
+          if [ "$IS_MATCHED" = "true" ] && [ "$HAS_LABEL" = "false" ]; then
+            gh api --method POST \
+              "repos/${{ github.repository }}/issues/${PR_NUMBER}/labels" \
+              -f "labels[]=$label" --silent 2>/dev/null || true
+            ADDED="${ADDED:+$ADDED,}$label"
+          elif [ "$IS_MATCHED" = "false" ] && [ "$HAS_LABEL" = "true" ] && [ "${{ inputs.sync-labels }}" = "true" ]; then
+            gh api --method DELETE \
+              "repos/${{ github.repository }}/issues/${PR_NUMBER}/labels/$label" \
+              --silent 2>/dev/null || true
+            REMOVED="${REMOVED:+$REMOVED,}$label"
+          fi
+        done
+
+        echo "added=$ADDED" >> "$GITHUB_OUTPUT"
+        echo "removed=$REMOVED" >> "$GITHUB_OUTPUT"
+        echo "### PR Labels" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Added:** ${ADDED:-none}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Removed:** ${REMOVED:-none}" >> "$GITHUB_STEP_SUMMARY"

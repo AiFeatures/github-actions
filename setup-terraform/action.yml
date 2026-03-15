@@ -1,0 +1,102 @@
+name: Setup Terraform
+description: "Setup Terraform with caching and optional init"
+
+inputs:
+  terraform-version:
+    description: "Terraform version to install"
+    required: false
+    default: "latest"
+  working-directory:
+    description: "Working directory containing Terraform files"
+    required: false
+    default: "."
+  init:
+    description: "Run terraform init after setup"
+    required: false
+    default: "true"
+  backend-config:
+    description: "Backend configuration arguments (newline-separated key=value)"
+    required: false
+    default: ""
+  cli-config-credentials-token:
+    description: "Terraform Cloud / HCP token"
+    required: false
+    default: ""
+  fmt-check:
+    description: "Run terraform fmt -check"
+    required: false
+    default: "false"
+  validate:
+    description: "Run terraform validate after init"
+    required: false
+    default: "false"
+
+outputs:
+  terraform-version:
+    description: "Installed Terraform version"
+    value: ${{ steps.setup.outputs.terraform-version }}
+  init-status:
+    description: "Terraform init exit code"
+    value: ${{ steps.init.outputs.exitcode }}
+  fmt-status:
+    description: "Terraform fmt check exit code"
+    value: ${{ steps.fmt.outputs.exitcode }}
+  validate-status:
+    description: "Terraform validate exit code"
+    value: ${{ steps.validate.outputs.exitcode }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Terraform
+      id: setup
+      uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        cli_config_credentials_token: ${{ inputs.cli-config-credentials-token }}
+
+    - name: Cache Terraform plugins
+      uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      with:
+        path: |
+          ${{ inputs.working-directory }}/.terraform
+          ~/.terraform.d/plugin-cache
+        key: ${{ runner.os }}-terraform-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working-directory)) }}
+        restore-keys: |
+          ${{ runner.os }}-terraform-
+
+    - name: Terraform init
+      id: init
+      if: inputs.init == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        ARGS=""
+        if [ -n "${{ inputs.backend-config }}" ]; then
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              ARGS="$ARGS -backend-config=$line"
+            fi
+          done <<< "${{ inputs.backend-config }}"
+        fi
+        terraform init -input=false $ARGS
+        echo "exitcode=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Terraform fmt check
+      id: fmt
+      if: inputs.fmt-check == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        terraform fmt -check -recursive
+        echo "exitcode=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Terraform validate
+      id: validate
+      if: inputs.validate == 'true' && inputs.init == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        terraform validate -no-color
+        echo "exitcode=$?" >> "$GITHUB_OUTPUT"
