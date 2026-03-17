@@ -48,8 +48,9 @@ runs:
     - name: Install flyctl
       shell: bash
       run: |
-        curl -L https://fly.io/install.sh | sh
-        echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+        FLY_VERSION="0.3.80"
+        curl -fsSL "https://github.com/superfly/flyctl/releases/download/v${FLY_VERSION}/flyctl_${FLY_VERSION}_Linux_x86_64.tar.gz" \
+          | tar xz -C /usr/local/bin flyctl
 
     - name: Deploy to Fly.io
       id: deploy
