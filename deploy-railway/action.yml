@@ -35,7 +35,7 @@ runs:
   steps:
     - name: Install Railway CLI
       shell: bash
-      run: npm install -g @railway/cli@latest
+      run: npm install -g @railway/cli@3.21.3
 
     - name: Deploy to Railway
       id: deploy
