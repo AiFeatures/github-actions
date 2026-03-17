@@ -38,17 +38,16 @@ runs:
     - name: Install Supabase CLI
       shell: bash
       run: |
-        brew install supabase/tap/supabase 2>/dev/null || \
-          npm install -g supabase@latest
+        npm install -g supabase@2.15.8
 
     - name: Link Supabase project
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase-access-token }}
+        SUPABASE_DB_PASSWORD: ${{ inputs.db-password }}
       run: |
-        supabase link --project-ref "${{ inputs.project-id }}" \
-          --password "${{ inputs.db-password }}"
+        supabase link --project-ref "${{ inputs.project-id }}"
 
     - name: Run migrations
       id: migrate
@@ -56,9 +55,10 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase-access-token }}
+        SUPABASE_DB_PASSWORD: ${{ inputs.db-password }}
       run: |
         set -euo pipefail
-        supabase db push --password "${{ inputs.db-password }}"
+        supabase db push
         echo "status=success" >> "$GITHUB_OUTPUT"
         echo "### Supabase Migration" >> "$GITHUB_STEP_SUMMARY"
         echo "- **Project:** ${{ inputs.project-id }}" >> "$GITHUB_STEP_SUMMARY"
