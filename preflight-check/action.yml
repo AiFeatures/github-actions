@@ -1,0 +1,160 @@
+name: 'Preflight Check'
+description: 'Validates repository readiness before deploy/release - checks governance files, security, branch protection, and CI status'
+inputs:
+  check-governance:
+    description: 'Check governance files (copilot-instructions, AGENTS.md, CLAUDE.md, CODEOWNERS, dependabot.yml)'
+    required: false
+    default: 'true'
+  check-security:
+    description: 'Check security features (secret scanning, push protection, vulnerability alerts)'
+    required: false
+    default: 'true'
+  check-branch-protection:
+    description: 'Check branch protection/rulesets on default branch'
+    required: false
+    default: 'true'
+  check-ci-status:
+    description: 'Check that CI is passing on default branch'
+    required: false
+    default: 'true'
+  fail-on-warning:
+    description: 'Treat warnings as failures'
+    required: false
+    default: 'false'
+  token:
+    description: 'GitHub token for API calls'
+    required: false
+    default: ${{ github.token }}
+outputs:
+  passed:
+    description: 'Whether all checks passed'
+    value: ${{ steps.summary.outputs.passed }}
+  report:
+    description: 'Full preflight report in Markdown'
+    value: ${{ steps.summary.outputs.report }}
+  score:
+    description: 'Preflight score (0-100)'
+    value: ${{ steps.summary.outputs.score }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run preflight checks
+      id: checks
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        PASS=0
+        FAIL=0
+        WARN=0
+        DETAILS=""
+
+        check() {
+          local name="$1" result="$2" level="$3"
+          if [ "$result" = "true" ]; then
+            PASS=$((PASS + 1))
+            DETAILS="$DETAILS\n| $name | PASS | |"
+          elif [ "$level" = "warn" ]; then
+            WARN=$((WARN + 1))
+            DETAILS="$DETAILS\n| $name | WARN | Optional but recommended |"
+          else
+            FAIL=$((FAIL + 1))
+            DETAILS="$DETAILS\n| $name | FAIL | Required |"
+          fi
+        }
+
+        # Governance checks
+        if [ "${{ inputs.check-governance }}" = "true" ]; then
+          HAS_COPILOT=$(gh api "/repos/$REPO/contents/.github/copilot-instructions.md" --jq '.sha' 2>/dev/null && echo true || echo false)
+          check "copilot-instructions.md" "$HAS_COPILOT" "fail"
+
+          HAS_AGENTS=$(gh api "/repos/$REPO/contents/AGENTS.md" --jq '.sha' 2>/dev/null && echo true || echo false)
+          check "AGENTS.md" "$HAS_AGENTS" "fail"
+
+          HAS_CLAUDE=$(gh api "/repos/$REPO/contents/CLAUDE.md" --jq '.sha' 2>/dev/null && echo true || echo false)
+          check "CLAUDE.md" "$HAS_CLAUDE" "warn"
+
+          HAS_CODEOWNERS=$(gh api "/repos/$REPO/contents/.github/CODEOWNERS" --jq '.sha' 2>/dev/null && echo true || echo false)
+          check "CODEOWNERS" "$HAS_CODEOWNERS" "fail"
+
+          HAS_DEPENDABOT=$(gh api "/repos/$REPO/contents/.github/dependabot.yml" --jq '.sha' 2>/dev/null && echo true || echo false)
+          check "dependabot.yml" "$HAS_DEPENDABOT" "fail"
+
+          HAS_README=$(gh api "/repos/$REPO/contents/README.md" --jq '.sha' 2>/dev/null && echo true || echo false)
+          check "README.md" "$HAS_README" "fail"
+        fi
+
+        # Security checks
+        if [ "${{ inputs.check-security }}" = "true" ]; then
+          SEC_SCANNING=$(gh api "/repos/$REPO" --jq '.security_and_analysis.secret_scanning.status // "disabled"' 2>/dev/null)
+          check "Secret scanning" "$([ "$SEC_SCANNING" = "enabled" ] && echo true || echo false)" "fail"
+
+          PUSH_PROT=$(gh api "/repos/$REPO" --jq '.security_and_analysis.secret_scanning_push_protection.status // "disabled"' 2>/dev/null)
+          check "Push protection" "$([ "$PUSH_PROT" = "enabled" ] && echo true || echo false)" "fail"
+
+          VULN_ALERTS=$(gh api "/repos/$REPO/vulnerability-alerts" 2>/dev/null && echo enabled || echo disabled)
+          check "Vulnerability alerts" "$([ "$VULN_ALERTS" = "enabled" ] && echo true || echo false)" "fail"
+        fi
+
+        # Branch protection checks
+        if [ "${{ inputs.check-branch-protection }}" = "true" ]; then
+          DEFAULT_BRANCH=$(gh api "/repos/$REPO" --jq '.default_branch' 2>/dev/null)
+          PROTECTED=$(gh api "/repos/$REPO/branches/$DEFAULT_BRANCH/protection" 2>/dev/null && echo true || echo false)
+          check "Branch protection on $DEFAULT_BRANCH" "$PROTECTED" "fail"
+        fi
+
+        # CI status check
+        if [ "${{ inputs.check-ci-status }}" = "true" ]; then
+          DEFAULT_BRANCH=$(gh api "/repos/$REPO" --jq '.default_branch' 2>/dev/null)
+          CI_STATUS=$(gh api "/repos/$REPO/commits/$DEFAULT_BRANCH/check-runs?per_page=1" --jq '.check_runs[0].conclusion // "none"' 2>/dev/null)
+          check "CI passing on $DEFAULT_BRANCH" "$([ "$CI_STATUS" = "success" ] && echo true || echo false)" "warn"
+        fi
+
+        TOTAL=$((PASS + FAIL + WARN))
+        SCORE=$((TOTAL > 0 ? PASS * 100 / TOTAL : 0))
+
+        echo "pass=$PASS" >> "$GITHUB_OUTPUT"
+        echo "fail=$FAIL" >> "$GITHUB_OUTPUT"
+        echo "warn=$WARN" >> "$GITHUB_OUTPUT"
+        echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+        echo "details<<EOF" >> "$GITHUB_OUTPUT"
+        echo -e "$DETAILS" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+
+    - name: Generate summary
+      id: summary
+      shell: bash
+      run: |
+        PASS=${{ steps.checks.outputs.pass }}
+        FAIL=${{ steps.checks.outputs.fail }}
+        WARN=${{ steps.checks.outputs.warn }}
+        SCORE=${{ steps.checks.outputs.score }}
+        
+        REPORT="## Preflight Check Report\n\n"
+        REPORT="$REPORT**Repository:** ${{ github.repository }}\n"
+        REPORT="$REPORT**Score:** $SCORE/100\n"
+        REPORT="$REPORT**Results:** $PASS passed, $FAIL failed, $WARN warnings\n\n"
+        REPORT="$REPORT| Check | Status | Note |\n|-------|--------|------|\n"
+        REPORT="$REPORT${{ steps.checks.outputs.details }}\n"
+        
+        echo "report<<EOF" >> "$GITHUB_OUTPUT"
+        echo -e "$REPORT" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+        echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+        
+        if [ "$FAIL" -gt 0 ]; then
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.fail-on-warning }}" = "true" ] && [ "$WARN" -gt 0 ]; then
+            echo "::error::Preflight check FAILED: $FAIL failures, $WARN warnings (score: $SCORE/100)"
+          else
+            echo "::error::Preflight check FAILED: $FAIL failures (score: $SCORE/100)"
+          fi
+        elif [ "${{ inputs.fail-on-warning }}" = "true" ] && [ "$WARN" -gt 0 ]; then
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          echo "::error::Preflight check FAILED: $WARN warnings treated as failures (score: $SCORE/100)"
+        else
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+          echo "Preflight check PASSED (score: $SCORE/100)"
+        fi
