@@ -1,0 +1,120 @@
+name: Artifact Metadata
+description: "Generate standardized artifact metadata JSON with all 20 required fields per iAiFy TOM"
+
+inputs:
+  artifact-type:
+    description: "Artifact type (container, npm-package, release-bundle, test-report, sbom, security-scan)"
+    required: true
+  semantic-version:
+    description: "Semantic version"
+    required: false
+    default: ""
+  target-environment:
+    description: "Target deployment environment"
+    required: false
+    default: ""
+  sbom-reference:
+    description: "SBOM file path or URL"
+    required: false
+    default: ""
+  signature-status:
+    description: "Signature status (signed, unsigned, pending)"
+    required: false
+    default: "unsigned"
+  provenance-reference:
+    description: "Provenance attestation reference"
+    required: false
+    default: ""
+  retention-class:
+    description: "Retention class (ephemeral, standard, extended, permanent)"
+    required: false
+    default: "standard"
+  owner-team:
+    description: "Owner team"
+    required: false
+    default: ""
+  project:
+    description: "Project name"
+    required: false
+    default: ""
+  output-path:
+    description: "Output path for metadata JSON"
+    required: false
+    default: "artifact-metadata.json"
+  upload:
+    description: "Upload metadata as workflow artifact"
+    required: false
+    default: "true"
+
+outputs:
+  metadata-path:
+    description: "Path to generated metadata JSON"
+    value: ${{ steps.generate.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate metadata
+      id: generate
+      shell: bash
+      run: |
+        TAG_VALUE=""
+        if [ "${{ github.ref_type }}" = "tag" ]; then
+          TAG_VALUE="${{ github.ref_name }}"
+        fi
+
+        jq -n \
+          --arg enterprise "iAiFy" \
+          --arg organization "${{ github.repository_owner }}" \
+          --arg repository "${{ github.repository }}" \
+          --arg project "${{ inputs.project }}" \
+          --arg owner_team "${{ inputs.owner-team }}" \
+          --arg commit_sha "${{ github.sha }}" \
+          --arg branch "${{ github.ref_name }}" \
+          --arg tag_or_release "$TAG_VALUE" \
+          --arg workflow_name "${{ github.workflow }}" \
+          --arg workflow_run_id "${{ github.run_id }}" \
+          --arg build_timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          --arg build_actor "${{ github.actor }}" \
+          --arg semantic_version "${{ inputs.semantic-version }}" \
+          --arg artifact_type "${{ inputs.artifact-type }}" \
+          --arg runtime_platform "$(uname -s)/$(uname -m)" \
+          --arg target_environment "${{ inputs.target-environment }}" \
+          --arg sbom_reference "${{ inputs.sbom-reference }}" \
+          --arg signature_status "${{ inputs.signature-status }}" \
+          --arg provenance_reference "${{ inputs.provenance-reference }}" \
+          --arg retention_class "${{ inputs.retention-class }}" \
+          '{
+            enterprise: $enterprise,
+            organization: $organization,
+            repository: $repository,
+            project: $project,
+            owner_team: $owner_team,
+            commit_sha: $commit_sha,
+            branch: $branch,
+            tag_or_release: $tag_or_release,
+            workflow_name: $workflow_name,
+            workflow_run_id: $workflow_run_id,
+            build_timestamp: $build_timestamp,
+            build_actor: $build_actor,
+            semantic_version: $semantic_version,
+            artifact_type: $artifact_type,
+            runtime_platform: $runtime_platform,
+            target_environment: $target_environment,
+            sbom_reference: $sbom_reference,
+            signature_status: $signature_status,
+            provenance_reference: $provenance_reference,
+            retention_class: $retention_class
+          }' > "${{ inputs.output-path }}"
+
+        echo "path=${{ inputs.output-path }}" >> "$GITHUB_OUTPUT"
+        echo "Generated artifact metadata:"
+        cat "${{ inputs.output-path }}"
+
+    - name: Upload metadata
+      if: inputs.upload == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: artifact-metadata
+        path: ${{ inputs.output-path }}
+        retention-days: 90
