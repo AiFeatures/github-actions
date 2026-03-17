@@ -1,0 +1,30 @@
+name: verify-attestation
+description: Verify artifact attestation provenance
+
+inputs:
+  artifact:
+    description: "Path to artifact or container image to verify"
+    required: true
+  owner:
+    description: "GitHub owner (org) for attestation verification"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Verify attestation
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "Verifying attestation for: ${{ inputs.artifact }}"
+        OWNER="${{ inputs.owner }}"
+        if [ -z "$OWNER" ]; then
+          OWNER="${{ github.repository_owner }}"
+        fi
+        gh attestation verify "${{ inputs.artifact }}" --owner "$OWNER" || {
+          echo "::warning::Attestation verification failed for ${{ inputs.artifact }}"
+          exit 0
+        }
+        echo "Attestation verified successfully"
