@@ -1,18 +1,18 @@
 # iAiFy Enterprise — Reusable GitHub Actions
 
-Shared composite actions for all repositories in the **AiFeatures** organization.
+Shared composite actions for all repositories in the **iAiFy GitHub Enterprise**.
 
 ## Quick Start
 
-Reference any action using the full path:
+Reference any action using the full path with a version tag:
 
 ```yaml
-- uses: AiFeatures/github-actions/setup-node@main
+- uses: Ai-road-4-You/github-actions/setup-node@v1
   with:
     node-version: "22"
 ```
 
-> **Pin to a release tag** in production workflows instead of `@main`.
+> Pin to a **major version tag** (`@v1`) for automatic minor/patch updates, or to an **exact version** (`@v1.0.0`) for maximum stability. Do not use `@main` in production workflows. See [VERSIONING.md](VERSIONING.md) for details.
 
 ---
 
@@ -23,13 +23,13 @@ Reference any action using the full path:
 Setup Node.js with pnpm/npm/yarn caching and automatic dependency installation.
 
 ```yaml
-- uses: AiFeatures/github-actions/setup-node@main
+- uses: Ai-road-4-You/github-actions/setup-node@v1
   with:
-    node-version: "22"           # default: 22
-    package-manager: "pnpm"      # npm | pnpm | yarn (default: pnpm)
-    pnpm-version: "9"            # default: 9
-    install: "true"              # default: true
-    working-directory: "."       # default: .
+    node-version: "22"
+    package-manager: "pnpm"
+    pnpm-version: "9"
+    install: "true"
+    working-directory: "."
 ```
 
 | Output | Description |
@@ -44,12 +44,12 @@ Setup Node.js with pnpm/npm/yarn caching and automatic dependency installation.
 Setup Python with pip/poetry/uv caching and automatic dependency installation.
 
 ```yaml
-- uses: AiFeatures/github-actions/setup-python@main
+- uses: Ai-road-4-You/github-actions/setup-python@v1
   with:
-    python-version: "3.12"       # default: 3.12
-    package-manager: "pip"       # pip | poetry | uv (default: pip)
+    python-version: "3.12"
+    package-manager: "pip"
     requirements-file: "requirements.txt"
-    install: "true"              # default: true
+    install: "true"
 ```
 
 | Output | Description |
@@ -58,15 +58,37 @@ Setup Python with pip/poetry/uv caching and automatic dependency installation.
 
 ---
 
+### setup-terraform
+
+Setup Terraform with plugin caching, init, fmt check, and validate.
+
+```yaml
+- uses: Ai-road-4-You/github-actions/setup-terraform@v1
+  with:
+    terraform-version: "latest"
+    working-directory: "infra/"
+    init: "true"
+    validate: "true"
+    fmt-check: "true"
+```
+
+| Output | Description |
+|--------|-------------|
+| `terraform-version` | Installed version |
+| `init-status` | Init exit code |
+| `fmt-status` | Format check exit code |
+
+---
+
 ### docker-build-push
 
 Build and push container images to GHCR with multi-arch support.
 
 ```yaml
-- uses: AiFeatures/github-actions/docker-build-push@main
+- uses: Ai-road-4-You/github-actions/docker-build-push@v1
   with:
     password: ${{ secrets.GITHUB_TOKEN }}
-    platforms: "linux/amd64,linux/arm64"  # default: linux/amd64
+    platforms: "linux/amd64,linux/arm64"
     push: "true"
 ```
 
@@ -76,8 +98,6 @@ Build and push container images to GHCR with multi-arch support.
 | `digest` | Image digest |
 | `metadata` | Build metadata JSON |
 
-Generates tags automatically from branch, PR, semver, and SHA.
-
 ---
 
 ### security-scan
@@ -85,11 +105,11 @@ Generates tags automatically from branch, PR, semver, and SHA.
 Run Trivy vulnerability scanning, npm audit, and secret scanning.
 
 ```yaml
-- uses: AiFeatures/github-actions/security-scan@main
+- uses: Ai-road-4-You/github-actions/security-scan@v1
   with:
-    scan-type: "trivy,secrets"   # trivy | npm-audit | secrets
+    scan-type: "trivy,secrets"
     trivy-severity: "CRITICAL,HIGH"
-    trivy-exit-code: "1"         # fail the job on findings
+    trivy-exit-code: "1"
 ```
 
 | Output | Description |
@@ -99,20 +119,83 @@ Run Trivy vulnerability scanning, npm audit, and secret scanning.
 
 ---
 
+### auto-release
+
+Semantic versioning with automatic changelog generation.
+
+```yaml
+- uses: Ai-road-4-You/github-actions/auto-release@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    branches: "main"
+    tag-format: "v${version}"
+```
+
+| Output | Description |
+|--------|-------------|
+| `released` | Whether a release was created |
+| `version` | Released version number |
+| `tag` | Git tag |
+
+---
+
+### cost-check
+
+Infracost cost estimation for Terraform changes.
+
+```yaml
+- uses: Ai-road-4-You/github-actions/cost-check@v1
+  with:
+    api-key: ${{ secrets.INFRACOST_API_KEY }}
+    working-directory: "infra/"
+```
+
+---
+
+### verify-attestation
+
+Verify artifact provenance attestations.
+
+```yaml
+- uses: Ai-road-4-You/github-actions/verify-attestation@v1
+  with:
+    artifact: "my-artifact"
+    owner: "Ai-road-4-You"
+```
+
+---
+
+### label-pr
+
+Auto-label pull requests based on changed files.
+
+```yaml
+- uses: Ai-road-4-You/github-actions/label-pr@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+---
+
+### notify-slack
+
+Send Slack notifications for build status.
+
+```yaml
+- uses: Ai-road-4-You/github-actions/notify-slack@v1
+  with:
+    webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+    status: ${{ job.status }}
+```
+
+---
+
 ### deploy-vercel
 
 Deploy to Vercel with preview and production support.
 
 ```yaml
-# Preview deployment (PRs)
-- uses: AiFeatures/github-actions/deploy-vercel@main
-  with:
-    vercel-token: ${{ secrets.VERCEL_TOKEN }}
-    vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-    vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-
-# Production deployment
-- uses: AiFeatures/github-actions/deploy-vercel@main
+- uses: Ai-road-4-You/github-actions/deploy-vercel@v1
   with:
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
     vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
@@ -131,12 +214,11 @@ Deploy to Vercel with preview and production support.
 Deploy applications to Fly.io.
 
 ```yaml
-- uses: AiFeatures/github-actions/deploy-fly@main
+- uses: Ai-road-4-You/github-actions/deploy-fly@v1
   with:
     fly-api-token: ${{ secrets.FLY_API_TOKEN }}
-    app-name: "my-app"           # optional, reads from fly.toml
-    region: "iad"                # optional
-    strategy: "rolling"          # canary | rolling | bluegreen | immediate
+    app-name: "my-app"
+    strategy: "rolling"
 ```
 
 | Output | Description |
@@ -151,11 +233,11 @@ Deploy applications to Fly.io.
 Deploy applications to Railway.
 
 ```yaml
-- uses: AiFeatures/github-actions/deploy-railway@main
+- uses: Ai-road-4-You/github-actions/deploy-railway@v1
   with:
     railway-token: ${{ secrets.RAILWAY_TOKEN }}
-    service: "web"               # optional, for multi-service projects
-    environment: "production"    # default: production
+    service: "web"
+    environment: "production"
 ```
 
 | Output | Description |
@@ -170,12 +252,12 @@ Deploy applications to Railway.
 Run Supabase database migrations.
 
 ```yaml
-- uses: AiFeatures/github-actions/deploy-supabase@main
+- uses: Ai-road-4-You/github-actions/deploy-supabase@v1
   with:
     supabase-access-token: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     project-id: ${{ secrets.SUPABASE_PROJECT_ID }}
     db-password: ${{ secrets.SUPABASE_DB_PASSWORD }}
-    generate-types: "true"       # optional: generate TypeScript types
+    generate-types: "true"
 ```
 
 | Output | Description |
@@ -190,20 +272,11 @@ Run Supabase database migrations.
 Deploy to Firebase Hosting, Functions, Firestore, or Storage.
 
 ```yaml
-# Production deploy
-- uses: AiFeatures/github-actions/deploy-firebase@main
+- uses: Ai-road-4-You/github-actions/deploy-firebase@v1
   with:
     firebase-token: ${{ secrets.FIREBASE_TOKEN }}
     project-id: "my-project"
     targets: "hosting,functions"
-
-# Preview channel
-- uses: AiFeatures/github-actions/deploy-firebase@main
-  with:
-    firebase-token: ${{ secrets.FIREBASE_TOKEN }}
-    project-id: "my-project"
-    channel: "pr-${{ github.event.pull_request.number }}"
-    expires: "7d"
 ```
 
 | Output | Description |
@@ -213,202 +286,13 @@ Deploy to Firebase Hosting, Functions, Firestore, or Storage.
 
 ---
 
-### auto-release
+## Versioning
 
-Semantic versioning with automatic changelog generation.
-
-```yaml
-- uses: AiFeatures/github-actions/auto-release@main
-  with:
-    github-token: ${{ secrets.GITHUB_TOKEN }}
-    branches: "main"             # default: main
-    tag-format: "v${version}"    # default: v${version}
-```
-
-Uses [Conventional Commits](https://www.conventionalcommits.org/) to determine version bumps:
-- `feat:` → minor
-- `fix:` / `perf:` → patch
-- `BREAKING CHANGE:` → major
-
-| Output | Description |
-|--------|-------------|
-| `released` | Whether a release was created |
-| `version` | Released version number |
-| `tag` | Git tag |
-
----
-
-### setup-terraform
-
-Setup Terraform with plugin caching, init, fmt check, and validate.
-
-```yaml
-- uses: AiFeatures/github-actions/setup-terraform@main
-  with:
-    terraform-version: "latest"
-    working-directory: "infra/"
-    init: "true"
-    validate: "true"
-    fmt-check: "true"
-```
-
-| Output | Description |
-|--------|-------------|
-| `terraform-version` | Installed version |
-| `init-status` | Init exit code |
-| `fmt-status` | Format check exit code |
-| `validate-status` | Validate exit code |
-
----
-
-### cost-check
-
-Cloud cost estimation with Infracost for Terraform changes.
-
-```yaml
-- uses: AiFeatures/github-actions/cost-check@main
-  with:
-    api-key: ${{ secrets.INFRACOST_API_KEY }}
-    working-directory: "infra/"
-    threshold-percentage: "10"   # warn if costs increase >10%
-    github-token: ${{ secrets.GITHUB_TOKEN }}
-```
-
-| Output | Description |
-|--------|-------------|
-| `monthly-cost` | Estimated monthly cost |
-| `diff-monthly-cost` | Cost difference from baseline |
-| `cost-increased` | Whether cost exceeds threshold |
-
----
-
-### label-pr
-
-Auto-label pull requests based on changed file paths.
-
-```yaml
-- uses: AiFeatures/github-actions/label-pr@main
-  with:
-    github-token: ${{ secrets.GITHUB_TOKEN }}
-    sync-labels: "true"          # remove labels when files no longer match
-```
-
-Default labels: `frontend`, `backend`, `documentation`, `tests`, `ci`, `dependencies`, `infrastructure`, `database`.
-
-Override with custom config:
-
-```yaml
-- uses: AiFeatures/github-actions/label-pr@main
-  with:
-    github-token: ${{ secrets.GITHUB_TOKEN }}
-    config: |
-      api:
-        - "src/api/**"
-      mobile:
-        - "apps/mobile/**"
-```
-
-| Output | Description |
-|--------|-------------|
-| `labels-added` | Comma-separated added labels |
-| `labels-removed` | Comma-separated removed labels |
-
----
-
-## Full Workflow Example
-
-```yaml
-name: CI/CD
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-permissions:
-  contents: write
-  pull-requests: write
-  packages: write
-
-jobs:
-  ci:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: AiFeatures/github-actions/setup-node@main
-        with:
-          node-version: "22"
-          package-manager: "pnpm"
-
-      - name: Lint & test
-        run: |
-          pnpm lint
-          pnpm test
-
-      - uses: AiFeatures/github-actions/security-scan@main
-        with:
-          scan-type: "trivy,npm-audit"
-
-  label:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: AiFeatures/github-actions/label-pr@main
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-  deploy-preview:
-    if: github.event_name == 'pull_request'
-    needs: ci
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: AiFeatures/github-actions/deploy-vercel@main
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-
-  deploy-prod:
-    if: github.ref == 'refs/heads/main'
-    needs: ci
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: AiFeatures/github-actions/deploy-vercel@main
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          production: "true"
-
-  release:
-    if: github.ref == 'refs/heads/main'
-    needs: deploy-prod
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: AiFeatures/github-actions/auto-release@main
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-```
+See [VERSIONING.md](VERSIONING.md) for the full versioning strategy. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Contributing
 
-1. Create a branch for your changes
-2. Each action lives in its own directory with an `action.yml`
-3. All actions must be composite (`using: composite`)
-4. Pin third-party actions to full SHAs
-5. Add tests in `.github/workflows/test.yml`
-6. Open a PR — CI will validate automatically
-
-## License
-
-Internal use only — AiFeatures / iAiFy Enterprise.
+1. Create a feature branch
+2. Follow [Conventional Commits](https://www.conventionalcommits.org/)
+3. Open a PR (CODEOWNERS will auto-request review)
+4. After merge, a new release is cut automatically
