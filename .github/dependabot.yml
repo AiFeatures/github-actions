@@ -5,6 +5,9 @@ updates:
     schedule:
       interval: "weekly"
     groups:
+      iaify-shared:
+        patterns:
+          - "Ai-road-4-You/*"
       actions:
         patterns: ["*"]
   - package-ecosystem: "npm"
