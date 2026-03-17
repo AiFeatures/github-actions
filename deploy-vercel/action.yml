@@ -41,7 +41,7 @@ runs:
   steps:
     - name: Install Vercel CLI
       shell: bash
-      run: npm install -g vercel@latest
+      run: npm install -g vercel@39.3.0
 
     - name: Pull Vercel environment
       shell: bash
