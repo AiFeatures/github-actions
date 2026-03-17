@@ -24,7 +24,7 @@ runs:
           OWNER="${{ github.repository_owner }}"
         fi
         gh attestation verify "${{ inputs.artifact }}" --owner "$OWNER" || {
-          echo "::warning::Attestation verification failed for ${{ inputs.artifact }}"
-          exit 0
+          echo "::error::Attestation verification failed for ${{ inputs.artifact }}"
+          exit 1
         }
         echo "Attestation verified successfully"
